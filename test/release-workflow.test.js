@@ -10,6 +10,7 @@ const readmeSource = await readFile(new URL("../README.md", import.meta.url), "u
 const pkg = JSON.parse(packageSource);
 const packageLock = JSON.parse(packageLockSource);
 const escapedPackageVersion = pkg.version.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const serverRootImports = [...workflowSource.matchAll(/"([^"]+\.js)",/g)].map((match) => match[1]);
 
 test("package is prepared for GitHub release", () => {
   assert.match(pkg.version, /^\d+\.\d+\.\d+$/);
@@ -29,9 +30,20 @@ test("GitHub Actions workflow builds and publishes Windows release", () => {
   assert.match(workflowSource, /--self-contained true/);
   assert.match(workflowSource, /-p:PublishSingleFile=true/);
   assert.match(workflowSource, /npm ci --omit=dev/);
+  assert.match(workflowSource, /"app-update\.js"/);
   assert.match(workflowSource, /"stop\.cmd"/);
   assert.match(workflowSource, /Compress-Archive/);
   assert.match(workflowSource, /gh release create \$tag/);
+});
+
+test("release package includes root JavaScript modules imported by server", async () => {
+  const importedRootModules = [...(await readFile(new URL("../server.js", import.meta.url), "utf8")).matchAll(/from "\.\/([^/"]+\.js)"/g)]
+    .map((match) => match[1]);
+
+  assert.deepEqual([...new Set(importedRootModules)].sort(), ["app-update.js"]);
+  for (const modulePath of importedRootModules) {
+    assert.ok(serverRootImports.includes(modulePath), `${modulePath} must be copied into the release package`);
+  }
 });
 
 test("GitHub Actions CI runs the full local verification suite", () => {

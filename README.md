@@ -14,7 +14,7 @@ Projekt jest przeznaczony do lokalnego uruchamiania na Windowsie.
 Pobierz gotowa paczke z GitHub Releases:
 
 ```text
-otchlan-mapper-1.1.1.zip
+otchlan-mapper-1.1.2.zip
 ```
 
 Po pobraniu:
