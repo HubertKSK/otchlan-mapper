@@ -1,7 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { linkWorldRooms, parseAreaRooms, parseSkillSymbolsFromText } from "../scripts/extract-world.mjs";
+import {
+  linkWorldRooms,
+  parseAreaRooms,
+  parseSkillSymbolsFromText,
+  parseSpellEffects,
+  parseSummonControlEffectsFromText
+} from "../scripts/extract-world.mjs";
 
 const extractorSource = await readFile(new URL("../scripts/extract-world.mjs", import.meta.url), "utf8");
 
@@ -34,6 +40,44 @@ test("extracts skill symbols from otchlan.exe text for effect name fallback", ()
       raw: "9B",
       symbol: "LASKA_BLYSKAWIC",
       name: "laska blyskawic"
+    }
+  ]);
+});
+
+test("extracts encoded spell effect names from czary.dat records", () => {
+  const recordSize = 262;
+  const nameOffset = 8;
+  const key = [3, 4, 5, 6, 7];
+  const buffer = Buffer.alloc(recordSize * 2);
+  const name = "widmowa tarcza";
+
+  buffer.writeInt32LE(138, 0);
+  buffer[nameOffset] = name.length;
+  for (let index = 0; index < name.length; index += 1) {
+    buffer[nameOffset + 1 + index] = (name.charCodeAt(index) + key[index % key.length]) & 0xff;
+  }
+
+  buffer.writeInt32LE(139, recordSize);
+  buffer[recordSize + nameOffset] = 4;
+  buffer[recordSize + nameOffset + 1] = 0xff;
+
+  assert.deepEqual(parseSpellEffects(buffer), [
+    {
+      number: 138,
+      name: "widmowa tarcza"
+    }
+  ]);
+});
+
+test("extracts summon control effect names from otchlan.exe command markers", () => {
+  assert.deepEqual(parseSummonControlEffectsFromText("mp157;gryf;\0mp162;zombiak;\0"), [
+    {
+      number: 157,
+      name: "kontrola nad gryfem"
+    },
+    {
+      number: 162,
+      name: "kontrola nad zombiakiem"
     }
   ]);
 });

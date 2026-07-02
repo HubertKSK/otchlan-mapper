@@ -8,6 +8,24 @@ const DEFAULT_OTCHLAN_DIR = "C:\\Program Files (x86)\\Otchlan 1.3";
 const DEFAULT_GAME_DIR = process.env.OTCHLAN_DIR || DEFAULT_OTCHLAN_DIR;
 const DEFAULT_OUTPUT = "world-cache.json";
 const RECORD_SIZE = 251;
+const SPELL_EFFECT_RECORD_SIZE = 262;
+const SPELL_EFFECT_NAME_OFFSET = 8;
+const SPELL_EFFECT_NAME_MAX_LENGTH = 30;
+const SPELL_EFFECT_KEY = [3, 4, 5, 6, 7];
+const SUMMON_CONTROL_TARGET_NAMES = new Map([
+  ["elemental", "elementalem"],
+  ["elemental ognia", "elementalem ognia"],
+  ["elemental powietrza", "elementalem powietrza"],
+  ["elemental wody", "elementalem wody"],
+  ["elemental ziemi", "elementalem ziemi"],
+  ["gryf", "gryfem"],
+  ["niedźwiedź", "niedźwiedziem"],
+  ["sokół", "sokołem"],
+  ["szkielet", "szkieletem"],
+  ["śmiercionios", "śmiercioniosem"],
+  ["upiór", "upiorem"],
+  ["zombiak", "zombiakiem"]
+]);
 const END_MARKER = 0xfe;
 const FIELD_SEPARATOR = 0x01;
 const AREA_KEY = Uint8Array.from([0x70, 0x6c, 0x65, 0x70, 0x6c, 0x06]);
@@ -46,6 +64,7 @@ if (isCliEntry()) {
 }
 
 export async function extractWorld(areaDirPath) {
+  const sourceGameDir = path.dirname(areaDirPath);
   const entries = await readdir(areaDirPath, { withFileTypes: true });
   const areaFiles = entries
     .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith(".are"))
@@ -70,20 +89,106 @@ export async function extractWorld(areaDirPath) {
   const linkedRooms = linkWorldRooms(rooms);
   const layers = buildWorldLayers(linkedRooms);
   const zLayers = buildZLayers(layers);
-  const skillSymbols = await extractSkillSymbols(gameDir, warnings);
+  const skillSymbols = await extractSkillSymbols(sourceGameDir, warnings);
+  const spellEffects = mergeEffectNameLists(
+    await extractSpellEffects(sourceGameDir, warnings),
+    await extractSummonControlEffects(sourceGameDir, warnings)
+  );
 
   return {
     generatedAt: new Date().toISOString(),
     appVersion: packageJson.version,
-    gameDir,
+    gameDir: sourceGameDir,
     recordSize: RECORD_SIZE,
     areas: areaFiles,
     skillSymbols,
+    spellEffects,
     layers,
     zLayers,
     rooms: linkedRooms,
     warnings
   };
+}
+
+export async function extractSpellEffects(gameDirPath, warnings = []) {
+  const filePath = path.join(gameDirPath, "dat", "czary.dat");
+  try {
+    return parseSpellEffects(await readFile(filePath));
+  } catch (error) {
+    warnings.push(`dat/czary.dat: spell effect extraction failed: ${error.message}`);
+    return [];
+  }
+}
+
+export async function extractSummonControlEffects(gameDirPath, warnings = []) {
+  const filePath = path.join(gameDirPath, "otchlan.exe");
+  try {
+    const text = decoder.decode(await readFile(filePath));
+    return parseSummonControlEffectsFromText(text);
+  } catch (error) {
+    warnings.push(`otchlan.exe: summon control effect extraction failed: ${error.message}`);
+    return [];
+  }
+}
+
+export function parseSpellEffects(bufferLike) {
+  const buffer = Buffer.from(bufferLike);
+  const effects = [];
+  if (buffer.length % SPELL_EFFECT_RECORD_SIZE !== 0) return effects;
+  for (let offset = 0; offset < buffer.length; offset += SPELL_EFFECT_RECORD_SIZE) {
+    const number = buffer.readInt32LE(offset);
+    const name = decodeSpellEffectName(buffer, offset + SPELL_EFFECT_NAME_OFFSET, SPELL_EFFECT_NAME_MAX_LENGTH);
+    if (!number || !isSafeSpellEffectName(name)) continue;
+    effects.push({ number, name });
+  }
+  return effects.sort((left, right) => left.number - right.number);
+}
+
+function decodeSpellEffectName(buffer, offset, maxLength) {
+  const length = Math.min(buffer[offset] || 0, maxLength);
+  const decoded = Buffer.alloc(length);
+  for (let index = 0; index < length; index += 1) {
+    decoded[index] = (buffer[offset + 1 + index] - SPELL_EFFECT_KEY[index % SPELL_EFFECT_KEY.length]) & 0xff;
+  }
+  return decoder.decode(decoded).trim();
+}
+
+function isSafeSpellEffectName(name) {
+  return /^[\p{L} ]+$/u.test(name) && name.includes(" ");
+}
+
+export function parseSummonControlEffectsFromText(text) {
+  const effects = new Map();
+  const pattern = /mp(\d+);([^;\0]+);/g;
+  for (const match of text.matchAll(pattern)) {
+    const number = Number.parseInt(match[1], 10);
+    const target = normalizeSummonControlTarget(match[2]);
+    if (!Number.isFinite(number) || number <= 0 || !target || effects.has(number)) continue;
+    effects.set(number, {
+      number,
+      name: `kontrola nad ${target}`
+    });
+  }
+  return [...effects.values()].sort((left, right) => left.number - right.number);
+}
+
+function normalizeSummonControlTarget(name) {
+  const normalized = name.toLowerCase().replace(/\s+/g, " ").trim();
+  if (!normalized) return "";
+  return SUMMON_CONTROL_TARGET_NAMES.get(normalized) || normalized;
+}
+
+function mergeEffectNameLists(...lists) {
+  const effects = new Map();
+  for (const list of lists) {
+    for (const entry of list || []) {
+      const number = Number(entry?.number);
+      const name = String(entry?.name || "").trim();
+      if (!Number.isFinite(number) || number <= 0 || !name || effects.has(number)) continue;
+      effects.set(number, { number, name });
+    }
+  }
+  return [...effects.values()].sort((left, right) => left.number - right.number);
 }
 
 export async function extractSkillSymbols(gameDirPath, warnings = []) {

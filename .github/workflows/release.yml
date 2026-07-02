@@ -64,6 +64,7 @@ jobs:
             "public",
             "scripts",
             "src",
+            "app-update.js",
             "server.js",
             "package.json",
             "package-lock.json",

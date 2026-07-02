@@ -68,11 +68,17 @@ test("server pauses memory reader while game is idle and resumes on input", () =
 });
 
 test("server enriches unnamed memory effects from extracted game symbols", () => {
+  assert.match(serverSource, /import \{ parseSpellEffects, parseSummonControlEffectsFromText \} from "\.\/scripts\/extract-world\.mjs";/);
   assert.match(serverSource, /import \{ createReadStream, existsSync, readFileSync, statSync, watch \} from "node:fs";/);
   assert.match(serverSource, /let worldCacheEffectNames = null;/);
-  assert.match(serverSource, /const name = normalizeEffectName\(String\(effect\?\.name \|\| ""\)\) \|\| getWorldCacheEffectName\(number\);/);
+  assert.match(serverSource, /let gameSpellEffectNames = null;/);
+  assert.match(serverSource, /const name = getWorldCacheEffectName\(number\) \|\| getGameSpellEffectName\(number\) \|\| normalizeEffectName\(String\(effect\?\.name \|\| ""\)\);/);
   assert.match(serverSource, /function getWorldCacheEffectNames\(\) \{/);
   assert.match(serverSource, /for \(const entry of cache\.skillSymbols \|\| \[\]\)/);
+  assert.match(serverSource, /for \(const entry of cache\.spellEffects \|\| \[\]\)/);
+  assert.match(serverSource, /function getGameSpellEffectNames\(\) \{/);
+  assert.match(serverSource, /for \(const entry of parseSpellEffects\(readFileSync\(spellFile\)\)\)/);
+  assert.match(serverSource, /for \(const entry of parseSummonControlEffectsFromText\(exeText\)\)/);
 });
 
 test("position reader extracts G1 location and area file offsets", () => {

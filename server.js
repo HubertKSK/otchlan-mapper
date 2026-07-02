@@ -7,6 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { StringDecoder } from "node:string_decoder";
 import { compareSemver, normalizeVersionTag } from "./app-update.js";
+import { parseSpellEffects, parseSummonControlEffectsFromText } from "./scripts/extract-world.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, "public");
@@ -28,6 +29,7 @@ const WORLD_CACHE_FILE = path.join(__dirname, "world-cache.json");
 const WORLD_ATLAS_FILE = path.join(__dirname, "world-atlas.json");
 const USER_LAYER_FILE = path.join(__dirname, "user-layer.json");
 const USER_LAYER_DEMO_FILE = path.join(__dirname, "user-layer-demo.json");
+const GAME_FILE_DECODER = new TextDecoder("windows-1250");
 const DEBUG_ENABLED = process.argv.includes("--debug") || isTruthyEnv(process.env.OTCHLAN_DEBUG) || isTruthyEnv(process.env.DEBUG_TERMINAL);
 const TERMINAL_DEBUG_FILE = path.join(LOG_DIR, "terminal-output-debug.jsonl");
 const OTCHLAN_POSITION_READER = path.join(__dirname, "scripts", "read-otchlan-position.ps1");
@@ -57,6 +59,8 @@ let lastGamePositionLogSignature = "";
 let lastGamePositionLogAt = 0;
 let worldCacheEffectNames = null;
 let worldCacheEffectNamesMtimeMs = 0;
+let gameSpellEffectNames = null;
+let gameSpellEffectNamesMtimeMs = 0;
 let worldBuildTask = null;
 let updateStatusCache = null;
 let gameReaderMode = "stopped";
@@ -1235,7 +1239,7 @@ function normalizeGameEffects(effects = []) {
   return effects
     .map((effect) => {
       const number = finiteNumber(effect?.number);
-      const name = normalizeEffectName(String(effect?.name || "")) || getWorldCacheEffectName(number);
+      const name = getWorldCacheEffectName(number) || getGameSpellEffectName(number) || normalizeEffectName(String(effect?.name || ""));
       return {
         slot: finiteNumber(effect?.slot),
         number,
@@ -1266,6 +1270,11 @@ function getWorldCacheEffectNames() {
       const name = normalizeEffectName(String(entry?.name || ""));
       if (number && name) names.set(number, name);
     }
+    for (const entry of cache.spellEffects || []) {
+      const number = finiteNumber(entry?.number);
+      const name = normalizeEffectName(String(entry?.name || ""));
+      if (number && name && !names.has(number)) names.set(number, name);
+    }
     worldCacheEffectNames = names;
     worldCacheEffectNamesMtimeMs = fileStat.mtimeMs;
     return names;
@@ -1273,6 +1282,42 @@ function getWorldCacheEffectNames() {
     worldCacheEffectNames = new Map();
     worldCacheEffectNamesMtimeMs = 0;
     return worldCacheEffectNames;
+  }
+}
+
+function getGameSpellEffectName(number) {
+  if (!number) return "";
+  const names = getGameSpellEffectNames();
+  return names.get(number) || "";
+}
+
+function getGameSpellEffectNames() {
+  const spellFile = path.join(GAME_DIR, "dat", "czary.dat");
+  const exeFile = path.join(GAME_DIR, "otchlan.exe");
+  try {
+    const spellFileStat = statSync(spellFile);
+    const exeFileStat = statSync(exeFile);
+    const cacheKey = `${spellFileStat.mtimeMs}|${exeFileStat.mtimeMs}`;
+    if (gameSpellEffectNames && gameSpellEffectNamesMtimeMs === cacheKey) return gameSpellEffectNames;
+    const names = new Map();
+    for (const entry of parseSpellEffects(readFileSync(spellFile))) {
+      const number = finiteNumber(entry?.number);
+      const name = normalizeEffectName(String(entry?.name || ""));
+      if (number && name) names.set(number, name);
+    }
+    const exeText = GAME_FILE_DECODER.decode(readFileSync(exeFile));
+    for (const entry of parseSummonControlEffectsFromText(exeText)) {
+      const number = finiteNumber(entry?.number);
+      const name = normalizeEffectName(String(entry?.name || ""));
+      if (number && name && !names.has(number)) names.set(number, name);
+    }
+    gameSpellEffectNames = names;
+    gameSpellEffectNamesMtimeMs = cacheKey;
+    return names;
+  } catch {
+    gameSpellEffectNames = new Map();
+    gameSpellEffectNamesMtimeMs = 0;
+    return gameSpellEffectNames;
   }
 }
 
